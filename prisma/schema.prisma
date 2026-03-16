@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Scan {
+  id                String        @id @default(cuid())
+  targetUrl         String
+  normalizedOrigin  String
+  status            String        @default("pending")
+  optionsJson       String        @default("{}")
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  pagesScanned      Int           @default(0)
+  requestsCaptured  Int           @default(0)
+  findingsCount     Int           @default(0)
+  highCount         Int           @default(0)
+  mediumCount       Int           @default(0)
+  lowCount          Int           @default(0)
+  infoCount         Int           @default(0)
+  errorMessage      String?
+  createdAt         DateTime      @default(now())
+  pages             ScannedPage[]
+  requests          NetworkRequest[]
+  findings          Finding[]
+  logs              ScanLog[]
+}
+
+model ScannedPage {
+  id            String    @id @default(cuid())
+  scanId        String
+  url           String
+  depth         Int       @default(0)
+  statusCode    Int?
+  contentType   String?
+  title         String?
+  htmlSnapshot  String?
+  headersJson   String?
+  storageJson   String?
+  createdAt     DateTime  @default(now())
+  scan          Scan      @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  requests      NetworkRequest[]
+  findings      Finding[]
+}
+
+model NetworkRequest {
+  id                  String      @id @default(cuid())
+  scanId              String
+  pageId              String?
+  url                 String
+  method              String      @default("GET")
+  resourceType        String?
+  statusCode          Int?
+  requestHeadersJson  String?
+  responseHeadersJson String?
+  responseSnippet     String?
+  createdAt           DateTime    @default(now())
+  scan                Scan        @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  page                ScannedPage? @relation(fields: [pageId], references: [id])
+  findings            Finding[]
+}
+
+model Finding {
+  id          String    @id @default(cuid())
+  scanId      String
+  pageId      String?
+  requestId   String?
+  severity    String
+  category    String
+  title       String
+  description String
+  url         String
+  assetUrl    String?
+  evidence    String
+  confidence  String?
+  createdAt   DateTime  @default(now())
+  scan        Scan      @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  page        ScannedPage? @relation(fields: [pageId], references: [id])
+  request     NetworkRequest? @relation(fields: [requestId], references: [id])
+}
+
+model ScanLog {
+  id        String   @id @default(cuid())
+  scanId    String
+  level     String   @default("info")
+  message   String
+  createdAt DateTime @default(now())
+  scan      Scan     @relation(fields: [scanId], references: [id], onDelete: Cascade)
+}
