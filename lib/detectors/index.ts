@@ -1,5 +1,6 @@
 import { FindingInput, PageArtifacts } from '../types'
 import { detectSecrets, detectNextPublicEnv } from './secrets'
+import { detectHardcodedPasswords } from './passwords'
 import { detectMissingHeaders } from './headers'
 import { detectInsecureCookies } from './cookies'
 import { detectStorageRisks } from './storage'
@@ -45,11 +46,13 @@ export async function runDetectors(
   if (options.searchSecrets && artifacts.html) {
     findings.push(...detectSecrets(artifacts.html, url, 'HTML source'))
     findings.push(...detectNextPublicEnv(artifacts.html, url))
+    findings.push(...detectHardcodedPasswords(artifacts.html, url, 'HTML source'))
   }
 
   if (options.inspectInlineScripts && options.searchSecrets) {
     for (const script of artifacts.inlineScripts) {
       findings.push(...detectSecrets(script, url, 'inline script'))
+      findings.push(...detectHardcodedPasswords(script, url, 'inline script'))
     }
   }
 
@@ -89,6 +92,7 @@ export async function runBundleDetectors(
   if (options.searchSecrets) {
     findings.push(...detectSecrets(bundleContent, pageUrl, `JS bundle (${bundleUrl})`))
     findings.push(...detectNextPublicEnv(bundleContent, pageUrl))
+    findings.push(...detectHardcodedPasswords(bundleContent, pageUrl, `JS bundle (${bundleUrl})`))
   }
 
   if (options.detectSourceMaps) {
