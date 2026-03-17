@@ -2,7 +2,7 @@ import { FindingInput } from '../types'
 import { isLikelyPlaceholder, isHighEntropy } from './secrets'
 
 // ---------------------------------------------------------------------------
-// Additional placeholder / skip heuristics specific to passwords
+// Password-specific placeholder / skip heuristics
 // ---------------------------------------------------------------------------
 
 const PASSWORD_PLACEHOLDER_PATTERNS = [
@@ -11,14 +11,14 @@ const PASSWORD_PLACEHOLDER_PATTERNS = [
   /^pass$/i,
   /^pwd$/i,
   /^secret$/i,
-  /^<[^>]+>$/,           // <password>, <secret>
-  /^\{[^}]+\}$/,         // {password}, {pass}
-  /^\$\{[^}]+\}$/,       // ${PASSWORD} — template variable, not a literal
+  /^<[^>]+>$/,           // <password>
+  /^\{[^}]+\}$/,         // {password}
+  /^\$\{[^}]+\}$/,       // ${PASSWORD} — template variable
   /^%[a-z(]/i,           // %s, %(name)s — format strings
-  /^\*+$/,               // ****
-  /^\.+$/,               // ....
-  /^x+$/i,               // xxxx
-  /^n\/?a$/i,            // n/a
+  /^\*+$/,
+  /^\.+$/,
+  /^x+$/i,
+  /^n\/?a$/i,
   /^null$/i,
   /^undefined$/i,
   /^none$/i,
@@ -29,10 +29,9 @@ const PASSWORD_PLACEHOLDER_PATTERNS = [
   /^changeme$/i,
   /^changeit$/i,
   /^replace.?me$/i,
-  /^your.?password$/i,
-  /^your.?pass$/i,
-  /^enter.?password$/i,
-  /^my.?password$/i,
+  /^your.?pass(word)?$/i,
+  /^enter.?pass(word)?$/i,
+  /^my.?pass(word)?$/i,
   /^test/i,
   /^demo/i,
   /^example/i,
@@ -40,13 +39,16 @@ const PASSWORD_PLACEHOLDER_PATTERNS = [
   /^fake/i,
   /^dummy/i,
   /^placeholder/i,
-  /^root$/i,              // Very common default but also very common real value; flag only as low
+  /^insert.?here$/i,
+  /^type.?here$/i,
+  /^123+$/,              // 123, 1234, 12345, etc.
+  /^abc+$/i,
 ]
 
-// Values that are clearly trivial defaults — still flag but downgrade to low/info
+// Still report but downgrade to low confidence
 const TRIVIAL_DEFAULTS = new Set([
-  'root', 'admin', 'toor', 'pass', '1234', '12345', '123456',
-  'password1', 'qwerty', 'letmein', 'welcome', 'monkey', 'dragon',
+  'root', 'admin', 'toor', 'pass', 'qwerty', 'letmein',
+  'welcome', 'monkey', 'dragon', 'password1', 'iloveyou',
 ])
 
 function isPasswordPlaceholder(value: string): boolean {
@@ -70,108 +72,125 @@ function buildSnippet(content: string, index: number, length: number): string {
 
 interface PasswordPattern {
   name: string
-  // Full regex — capture group 1 should be the credential value
   regex: RegExp
   context: string
   baseSeverity: 'high' | 'medium' | 'low'
 }
 
+// All password-like variable/key names to check for assignments
+const PASSWORD_KEY_NAMES = [
+  'password', 'passwd', 'pwd',
+  'db_pass(?:word)?', 'database_pass(?:word)?',
+  'redis_pass(?:word)?', 'mysql_pass(?:word)?',
+  'postgres_pass(?:word)?', 'postgresql_pass(?:word)?', 'pg_pass(?:word)?',
+  'mongo_pass(?:word)?', 'mongodb_pass(?:word)?',
+  'admin_pass(?:word)?', 'root_pass(?:word)?',
+  'user_pass(?:word)?', 'app_pass(?:word)?',
+  'smtp_pass(?:word)?', 'mail_pass(?:word)?', 'email_pass(?:word)?',
+  'api_pass(?:word)?', 'ftp_pass(?:word)?',
+  'ldap_pass(?:word)?', 'ssh_pass(?:word)?',
+].join('|')
+
 const ASSIGNMENT_PATTERNS: PasswordPattern[] = [
   {
     name: 'Hardcoded password assignment',
-    regex: /(?:^|[,;{\s(])(?:password|passwd|db_pass(?:word)?|redis_password|app_password|admin_password)\s*[=:]\s*["']([^"']{3,})["']/gim,
-    context: 'assignment',
+    // Matches: password = "value", password: "value", PASSWORD = 'value'
+    regex: new RegExp(
+      `(?:^|[,;{\\s(])(?:${PASSWORD_KEY_NAMES})\\s*[=:]\\s*["']([^"']{3,})["']`,
+      'gim'
+    ),
+    context: 'code assignment',
     baseSeverity: 'high',
-  },
-  {
-    name: 'Hardcoded pwd assignment',
-    regex: /(?:^|[,;{\s(])pwd\s*[=:]\s*["']([^"']{3,})["']/gim,
-    context: 'assignment',
-    baseSeverity: 'medium',  // `pwd` is ambiguous (could be working directory)
   },
 ]
 
 const ENV_PATTERNS: PasswordPattern[] = [
   {
     name: 'ENV password variable',
-    // Matches: DB_PASSWORD=value, REDIS_PASSWORD=value, etc. (unquoted and quoted)
-    regex: /\b(?:[A-Z][A-Z0-9]*_)?(?:PASSWORD|PASSWD|DB_PASS(?:WORD)?|REDIS_PASS(?:WORD)?)\s*=\s*(?:["']([^"'\r\n]{3,})["']|([^\s#"'\r\n]{3,}))/g,
-    context: '.env / config',
+    // DB_PASSWORD=value, REDIS_PASSWORD="value", SMTP_PASS=unquoted, etc.
+    regex: /\b(?:[A-Z][A-Z0-9]*_)?(?:PASSWORD|PASSWD|PASS)\s*=\s*(?:["']([^"'\r\n]{3,})["']|([^\s#"'\r\n]{3,}))/g,
+    context: 'environment variable',
     baseSeverity: 'high',
   },
 ]
 
 const URI_PATTERNS: PasswordPattern[] = [
   {
-    name: 'PostgreSQL connection URI with password',
+    name: 'PostgreSQL URI with embedded password',
     regex: /postgres(?:ql)?(?:\+\w+)?:\/\/[^:@\s"']+:([^@\s"']{3,})@/gi,
     context: 'connection URI',
     baseSeverity: 'high',
   },
   {
-    name: 'MySQL connection URI with password',
-    regex: /mysql(?:\+\w+)?:\/\/[^:@\s"']+:([^@\s"']{3,})@/gi,
+    name: 'MySQL/MariaDB URI with embedded password',
+    regex: /(?:mysql|mariadb)(?:\+\w+)?:\/\/[^:@\s"']+:([^@\s"']{3,})@/gi,
     context: 'connection URI',
     baseSeverity: 'high',
   },
   {
-    name: 'MongoDB connection URI with password',
+    name: 'MongoDB URI with embedded password',
     regex: /mongodb(?:\+srv)?:\/\/[^:@\s"']+:([^@\s"']{3,})@/gi,
     context: 'connection URI',
     baseSeverity: 'high',
   },
   {
-    name: 'Redis connection URI with password',
-    // redis://:password@host or redis://user:password@host
-    regex: /redis(?:s)?:\/\/[^@\s"']*:([^@\s"']{3,})@/gi,
+    name: 'Redis URI with embedded password',
+    regex: /rediss?:\/\/[^@\s"']*:([^@\s"']{3,})@/gi,
     context: 'connection URI',
     baseSeverity: 'high',
   },
   {
-    name: 'AMQP connection URI with password',
+    name: 'AMQP URI with embedded password',
     regex: /amqps?:\/\/[^:@\s"']+:([^@\s"']{3,})@/gi,
+    context: 'connection URI',
+    baseSeverity: 'high',
+  },
+  {
+    name: 'FTP URI with embedded password',
+    regex: /s?ftp:\/\/[^:@\s"']+:([^@\s"']{3,})@/gi,
+    context: 'connection URI',
+    baseSeverity: 'high',
+  },
+  {
+    name: 'SMTP URI with embedded password',
+    regex: /smtps?:\/\/[^:@\s"']+:([^@\s"']{3,})@/gi,
     context: 'connection URI',
     baseSeverity: 'high',
   },
 ]
 
 // ---------------------------------------------------------------------------
-// Detection logic
+// Classification
 // ---------------------------------------------------------------------------
 
-function classifyValue(
+function classify(
   value: string,
   baseSeverity: 'high' | 'medium' | 'low',
   isUri: boolean,
 ): { severity: 'high' | 'medium' | 'low'; confidence: string } | null {
   if (isPasswordPlaceholder(value)) return null
 
-  // URI credentials are almost always real — high confidence regardless of entropy
   if (isUri) {
-    if (isTrivialDefault(value)) {
-      return { severity: 'medium', confidence: 'medium' }
-    }
+    if (isTrivialDefault(value)) return { severity: 'medium', confidence: 'medium' }
     return { severity: baseSeverity, confidence: 'high' }
   }
 
-  if (isTrivialDefault(value)) {
-    // Still report, but downgrade
-    return { severity: 'low', confidence: 'low' }
-  }
+  if (isTrivialDefault(value)) return { severity: 'low', confidence: 'low' }
 
-  if (isHighEntropy(value)) {
-    return { severity: baseSeverity, confidence: 'high' }
-  }
+  if (isHighEntropy(value)) return { severity: baseSeverity, confidence: 'high' }
 
-  // Short/low-entropy value that isn't a known placeholder — possible but uncertain
+  // Short/low-entropy value that isn't a known placeholder
   if (value.length >= 6) {
     const downgraded: 'high' | 'medium' | 'low' = baseSeverity === 'high' ? 'medium' : 'low'
     return { severity: downgraded, confidence: 'medium' }
   }
 
-  // Too short to be meaningful
   return null
 }
+
+// ---------------------------------------------------------------------------
+// Runner
+// ---------------------------------------------------------------------------
 
 function runPatternSet(
   patterns: PasswordPattern[],
@@ -188,7 +207,6 @@ function runPatternSet(
     let match: RegExpExecArray | null
 
     while ((match = regex.exec(content)) !== null) {
-      // Capture group 1 is primary value; group 2 is fallback for unquoted ENV matches
       const value = (match[1] || match[2] || '').trim()
       if (!value) continue
 
@@ -196,19 +214,19 @@ function runPatternSet(
       if (seen.has(dedupeKey)) continue
       seen.add(dedupeKey)
 
-      const classification = classifyValue(value, pattern.baseSeverity, isUri)
-      if (!classification) continue
+      const result = classify(value, pattern.baseSeverity, isUri)
+      if (!result) continue
 
       const snippet = buildSnippet(content, match.index, match[0].length)
 
       findings.push({
-        severity: classification.severity,
-        category: 'secret_exposure',
+        severity: result.severity,
+        category: 'hardcoded_password',
         title: `${pattern.name} in ${sourceContext}`,
-        description: `A ${pattern.context} containing a hardcoded password was found in ${sourceContext}. Credentials should never be embedded in client-side code or public assets.`,
+        description: `A ${pattern.context} containing a hardcoded password was detected in ${sourceContext}. Credentials embedded in client-facing artifacts may be exposed to any user who inspects the page source.`,
         url,
         evidence: snippet.length > 300 ? snippet.substring(0, 300) + '…' : snippet,
-        confidence: classification.confidence,
+        confidence: result.confidence,
       })
     }
   }

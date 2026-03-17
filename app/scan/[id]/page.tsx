@@ -48,15 +48,22 @@ const SEVERITY_STYLES: Record<string, string> = {
 const CATEGORY_LABELS: Record<string, string> = {
   secret_exposure: 'Secret',
   token_exposure: 'Token',
+  hardcoded_password: 'Password',
   insecure_cookie: 'Cookie',
   missing_security_header: 'Header',
   sourcemap_exposure: 'Source Map',
   verbose_error: 'Error Leak',
   framework_leakage: 'Framework',
   suspicious_endpoint_reference: 'Endpoint',
+  possible_public_data_exposure: 'Data Exposure',
   storage_risk: 'Storage',
   cors_risk: 'CORS',
   info: 'Info',
+}
+
+// Findings originating from passive endpoint checks are visually distinguished
+function isPassiveFinding(finding: Finding): boolean {
+  return finding.evidence.startsWith('[Passive endpoint check]')
 }
 
 const STATUS_STYLE: Record<string, string> = {
@@ -279,6 +286,9 @@ export default function ScanPage() {
                       <p className="text-sm font-medium text-gray-900">{finding.title}</p>
                       <p className="text-xs text-gray-500 truncate mt-0.5">{finding.url}</p>
                     </div>
+                    {isPassiveFinding(finding) && (
+                      <span className="shrink-0 text-xs bg-purple-50 text-purple-600 border border-purple-200 rounded px-1.5 py-0.5 self-center">passive</span>
+                    )}
                     {finding.confidence && (
                       <span className="shrink-0 text-xs text-gray-400 self-center">conf: {finding.confidence}</span>
                     )}

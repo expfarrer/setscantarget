@@ -12,6 +12,8 @@
 // Schema types
 // ---------------------------------------------------------------------------
 
+export type FindingSource = 'crawl' | 'cookie_analysis' | 'passive_endpoint_check' | 'robots_txt'
+
 export interface IngestionExportFinding {
   id: string
   severity: string
@@ -22,6 +24,7 @@ export interface IngestionExportFinding {
   assetUrl: string | null
   evidence: string
   confidence: string | null
+  source: FindingSource
   pageId: string | null
   requestId: string | null
   createdAt: string
@@ -175,6 +178,13 @@ function buildCategoryCounts(
   return counts
 }
 
+function deriveFindingSource(f: ScanForIngestionExport['findings'][number]): FindingSource {
+  if (f.evidence.startsWith('[Passive endpoint check]')) return 'passive_endpoint_check'
+  if (f.category === 'insecure_cookie') return 'cookie_analysis'
+  if (f.url.endsWith('/robots.txt')) return 'robots_txt'
+  return 'crawl'
+}
+
 export function buildIngestionExport(scan: ScanForIngestionExport): IngestionExport {
   // Deterministic finding order: severity asc-rank, then category asc, then createdAt asc
   const sortedFindings = [...scan.findings].sort((a, b) => {
@@ -229,6 +239,7 @@ export function buildIngestionExport(scan: ScanForIngestionExport): IngestionExp
       assetUrl: f.assetUrl,
       evidence: truncateEvidence(f.evidence),
       confidence: f.confidence,
+      source: deriveFindingSource(f),
       pageId: f.pageId,
       requestId: f.requestId,
       createdAt: f.createdAt.toISOString(),
