@@ -4,6 +4,7 @@ import { CrawlScope } from '../crawler/scope'
 import { crawlPage, fetchTextAsset, closeBrowser } from '../crawler/playwright'
 import { runDetectors, runBundleDetectors } from '../detectors'
 import { detectRobotsIssues } from '../detectors/endpoints'
+import { runPassiveEndpointChecks } from '../detectors/passive-endpoints'
 import { log } from './logging'
 
 export async function runScan(scanId: string) {
@@ -149,26 +150,49 @@ async function performScan(scanId: string, targetUrl: string, options: ScanOptio
       }
     }
 
-    const findingCounts = await prisma.finding.groupBy({
-      by: ['severity'],
-      where: { scanId },
-      _count: { severity: true },
-    })
-    const counts = { high: 0, medium: 0, low: 0, info: 0 }
-    for (const row of findingCounts) counts[row.severity as keyof typeof counts] = row._count.severity
+    await updateProgress(scanId, scope.visitedCount, totalRequests)
+  }
 
-    await prisma.scan.update({
-      where: { id: scanId },
-      data: {
-        pagesScanned: scope.visitedCount,
-        requestsCaptured: totalRequests,
-        findingsCount: counts.high + counts.medium + counts.low + counts.info,
-        highCount: counts.high,
-        mediumCount: counts.medium,
-        lowCount: counts.low,
-        infoCount: counts.info,
-      },
-    })
+  // Passive common endpoint checks (opt-in, same-origin, GET-only, fixed allowlist)
+  if (options.passiveEndpointCheck) {
+    await log(scanId, 'info', 'Running passive common endpoint checks…')
+    try {
+      const passiveResults = await runPassiveEndpointChecks(targetUrl, options.requestTimeoutMs)
+      let passiveHits = 0
+
+      for (const result of passiveResults) {
+        if (result.statusCode === 0) continue // timeout/network error
+
+        // Record as a network request so it appears in the requests tab
+        await prisma.networkRequest.create({
+          data: {
+            scanId,
+            url: result.url,
+            method: 'GET',
+            resourceType: 'passive-endpoint-check',
+            statusCode: result.statusCode,
+            responseHeadersJson: JSON.stringify(result.responseHeaders),
+            responseSnippet: result.preview ?? undefined,
+          },
+        })
+        totalRequests++
+
+        for (const f of result.findings) {
+          await prisma.finding.create({ data: { scanId, ...f } })
+          passiveHits++
+        }
+      }
+
+      await log(
+        scanId,
+        'info',
+        `Passive endpoint checks done. ${passiveResults.filter(r => r.statusCode === 200).length} paths returned 200, ${passiveHits} finding(s).`,
+      )
+    } catch (error) {
+      await log(scanId, 'warn', `Passive endpoint checks failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+
+    await updateProgress(scanId, scope.visitedCount, totalRequests)
   }
 
   await prisma.scan.update({
@@ -176,4 +200,27 @@ async function performScan(scanId: string, targetUrl: string, options: ScanOptio
     data: { status: 'completed', finishedAt: new Date() },
   })
   await log(scanId, 'info', `Scan complete. Pages: ${scope.visitedCount}, Requests: ${totalRequests}`)
+}
+
+async function updateProgress(scanId: string, pagesScanned: number, requestsCaptured: number) {
+  const findingCounts = await prisma.finding.groupBy({
+    by: ['severity'],
+    where: { scanId },
+    _count: { severity: true },
+  })
+  const counts = { high: 0, medium: 0, low: 0, info: 0 }
+  for (const row of findingCounts) counts[row.severity as keyof typeof counts] = row._count.severity
+
+  await prisma.scan.update({
+    where: { id: scanId },
+    data: {
+      pagesScanned,
+      requestsCaptured,
+      findingsCount: counts.high + counts.medium + counts.low + counts.info,
+      highCount: counts.high,
+      mediumCount: counts.medium,
+      lowCount: counts.low,
+      infoCount: counts.info,
+    },
+  })
 }

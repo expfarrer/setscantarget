@@ -3,12 +3,14 @@ export type Severity = 'high' | 'medium' | 'low' | 'info'
 export type FindingCategory =
   | 'secret_exposure'
   | 'token_exposure'
+  | 'hardcoded_password'
   | 'insecure_cookie'
   | 'missing_security_header'
   | 'sourcemap_exposure'
   | 'verbose_error'
   | 'framework_leakage'
   | 'suspicious_endpoint_reference'
+  | 'possible_public_data_exposure'
   | 'storage_risk'
   | 'cors_risk'
   | 'info'
@@ -30,6 +32,7 @@ export interface ScanOptions {
   checkFrameworkLeakage: boolean
   checkConsoleErrors: boolean
   checkSuspiciousEndpoints: boolean
+  passiveEndpointCheck: boolean
   maxPages: number
   maxDepth: number
   requestTimeoutMs: number
@@ -55,6 +58,7 @@ export const defaultScanOptions: ScanOptions = {
   checkFrameworkLeakage: true,
   checkConsoleErrors: true,
   checkSuspiciousEndpoints: true,
+  passiveEndpointCheck: false,
   maxPages: 20,
   maxDepth: 2,
   requestTimeoutMs: 15000,

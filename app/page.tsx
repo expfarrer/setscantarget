@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { defaultScanOptions, ScanOptions } from '@/lib/types'
+import { PASSIVE_CHECK_PATHS } from '@/lib/detectors/passive-endpoints'
 
 const MODULE_GROUPS = [
   {
@@ -19,7 +20,7 @@ const MODULE_GROUPS = [
     label: 'Security Headers & Cookies',
     items: [
       { key: 'inspectHeaders', label: 'Inspect response headers' },
-      { key: 'inspectCookies', label: 'Inspect cookies' },
+      { key: 'inspectCookies', label: 'Inspect cookies (auth/session analysis included)' },
     ],
   },
   {
@@ -33,10 +34,10 @@ const MODULE_GROUPS = [
     label: 'Detection',
     items: [
       { key: 'detectSourceMaps', label: 'Detect exposed source maps' },
-      { key: 'searchSecrets', label: 'Search for secrets and tokens' },
+      { key: 'searchSecrets', label: 'Search for secrets, tokens, and hardcoded passwords' },
       { key: 'checkFrameworkLeakage', label: 'Check framework/version leakage' },
       { key: 'checkConsoleErrors', label: 'Check for verbose console errors' },
-      { key: 'checkSuspiciousEndpoints', label: 'Check for admin/debug endpoint references' },
+      { key: 'checkSuspiciousEndpoints', label: 'Check for admin/debug endpoint references in source' },
     ],
   },
   {
@@ -70,6 +71,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [recentScans, setRecentScans] = useState<RecentScan[]>([])
+  const [showPassivePaths, setShowPassivePaths] = useState(false)
 
   useEffect(() => {
     fetch('/api/scans').then(r => r.json()).then(d => setRecentScans(Array.isArray(d) ? d : [])).catch(() => {})
@@ -156,6 +158,46 @@ export default function HomePage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Passive Common Endpoint Checks — opt-in, clearly labelled */}
+        <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              id="passiveEndpointCheck"
+              checked={options.passiveEndpointCheck}
+              onChange={() => toggle('passiveEndpointCheck')}
+              className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <div>
+              <label htmlFor="passiveEndpointCheck" className="text-sm font-medium text-gray-900 cursor-pointer">
+                Passive Common Endpoint Checks
+              </label>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Performs safe GET-only requests to a small fixed allowlist of common API/admin/debug paths on the same origin.
+                Intended for authorized review of your own properties. 401, 403, and 404 responses are not flagged.
+                Only 200 responses with sensitive-looking or admin-accessible content are surfaced.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowPassivePaths(p => !p)}
+                className="text-xs text-blue-600 hover:underline mt-1"
+              >
+                {showPassivePaths ? 'Hide path list' : 'Show path list'}
+              </button>
+              {showPassivePaths && (
+                <div className="mt-2 bg-gray-50 border border-gray-200 rounded p-2">
+                  <p className="text-xs font-medium text-gray-500 mb-1">Paths checked (fixed list, same origin only):</p>
+                  <div className="flex flex-wrap gap-1">
+                    {PASSIVE_CHECK_PATHS.map(p => (
+                      <code key={p} className="text-xs bg-white border border-gray-200 rounded px-1.5 py-0.5 text-gray-700">{p}</code>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

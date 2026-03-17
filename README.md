@@ -9,10 +9,10 @@ A client-side security review tool built with Next.js, Playwright, Prisma, and S
 ## What it detects
 
 - Missing security response headers (CSP, HSTS, X-Content-Type-Options, Referrer-Policy, etc.)
-- Insecure cookies (missing HttpOnly, Secure, SameSite flags)
+- **Enhanced auth/session cookie analysis** — identifies auth/session cookies by name (session, sid, jwt, next-auth, supabase, clerk, firebase, etc.), flags missing HttpOnly/Secure/SameSite with higher severity, detects long-lived session cookies and SameSite=None misuse
 - Exposed source maps (.map files publicly accessible)
 - Secrets and tokens in HTML, inline scripts, and JS bundles (API keys, JWTs, AWS keys, Bearer tokens, PEM private keys)
-- Hardcoded passwords — assignments (`password: "..."`, `db_password = "..."`), ENV-style variables (`DB_PASSWORD=value`), and credential-bearing connection URIs (`postgres://user:pass@host`, `mysql://`, `mongodb://`, `redis://`, `amqps://`)
+- **Hardcoded passwords** — assignments (`password: "..."`, `db_password = "..."`), ENV-style variables (`DB_PASSWORD=value`), and credential-bearing connection URIs (`postgres://`, `mysql://`, `mariadb://`, `mongodb://`, `redis://`, `amqps://`, `ftp://`, `sftp://`, `smtp://`)
 - NEXT_PUBLIC_ environment variable leakage
 - Framework/version leakage in HTML content
 - Stack traces and verbose errors in the page or browser console
@@ -21,6 +21,7 @@ A client-side security review tool built with Next.js, Playwright, Prisma, and S
 - localStorage/sessionStorage token exposure
 - Wildcard CORS policies
 - Sensitive paths in robots.txt
+- **Passive common endpoint checks** (opt-in) — safe GET-only requests to a fixed allowlist of common API/admin/debug paths on the same origin; surfaces 200 responses with sensitive JSON data or accessible admin paths
 
 ---
 
@@ -158,14 +159,38 @@ lib/
     secrets.ts                      — API keys, JWTs, tokens, private keys
     passwords.ts                    — Hardcoded passwords, ENV vars, connection URIs
     headers.ts                      — Security header presence checks
-    cookies.ts                      — Cookie flag analysis
+    cookies.ts                      — Auth/session cookie analysis with enhanced severity
     storage.ts                      — localStorage/sessionStorage risk detection
     sourcemaps.ts                   — Source map reference and accessibility checks
     framework.ts                    — Framework leakage, stack traces, internal URLs
     endpoints.ts                    — Suspicious endpoints and robots.txt analysis
+    passive-endpoints.ts            — Opt-in passive GET checks against fixed path allowlist
   exports/
     ingestion-json.ts               — Ingestion report schema, types, and serializer
 ```
+
+---
+
+## Passive Common Endpoint Checks
+
+When enabled, the scanner performs safe GET-only requests against a small, fixed allowlist of paths on the same origin:
+
+```
+/api/users  /api/user  /api/admin  /api/auth/me  /api/me  /api/profile
+/api/debug  /api/internal  /api/config  /api/settings  /admin  /debug
+/internal  /dashboard  /health  /status  /.env  /config.json  /api.json
+```
+
+Rules:
+- **Same origin only** — never checks external domains
+- **GET only** — no form submissions or mutations
+- **Fixed list** — no guessing, fuzzing, or recursive generation
+- **Non-aggressive** — 401/403/404 responses are ignored
+- Findings are generated only for 200 responses with sensitive JSON fields, accessible admin/debug paths, or exposed config files
+- All passive findings are tagged `[Passive endpoint check]` in the evidence field and carry a purple "passive" badge in the UI
+- The path list is shown transparently in the scan form before enabling
+
+Intended for authorized self-review of your own projects only.
 
 ---
 
