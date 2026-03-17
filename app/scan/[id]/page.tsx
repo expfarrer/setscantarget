@@ -238,7 +238,7 @@ export default function ScanPage() {
               <select
                 value={severityFilter}
                 onChange={e => setSeverityFilter(e.target.value)}
-                className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="text-sm text-gray-900 border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All</option>
                 {SEVERITY_ORDER.map(s => (
@@ -251,7 +251,7 @@ export default function ScanPage() {
               <select
                 value={categoryFilter}
                 onChange={e => setCategoryFilter(e.target.value)}
-                className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="text-sm text-gray-900 border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All</option>
                 {categories.map(c => (
