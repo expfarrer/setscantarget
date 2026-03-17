@@ -24,11 +24,11 @@ const PLACEHOLDER_PATTERNS = [
   /demo/i, /changeme/i, /\*{4,}/,
 ]
 
-function isLikelyPlaceholder(value: string): boolean {
+export function isLikelyPlaceholder(value: string): boolean {
   return PLACEHOLDER_PATTERNS.some(p => p.test(value))
 }
 
-function isHighEntropy(str: string): boolean {
+export function isHighEntropy(str: string): boolean {
   if (str.length < 16) return false
   return new Set(str).size > 10
 }
