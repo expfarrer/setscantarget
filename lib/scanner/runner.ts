@@ -116,7 +116,10 @@ async function performScan(scanId: string, targetUrl: string, options: ScanOptio
     }
     totalRequests += artifacts.networkRequests.length
 
-    const pageFindings = await runDetectors(artifacts, options)
+    const pageFindings = await runDetectors(artifacts, {
+      ...options,
+      inspectNetworkRequests: options.inspectNetworkRequests,
+    })
     for (const f of pageFindings) {
       await prisma.finding.create({ data: { scanId, pageId: savedPage.id, ...f } })
     }

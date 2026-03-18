@@ -6,6 +6,7 @@ export type FindingCategory =
   | 'hardcoded_password'
   | 'insecure_cookie'
   | 'missing_security_header'
+  | 'weak_csp'
   | 'sourcemap_exposure'
   | 'verbose_error'
   | 'framework_leakage'
@@ -13,6 +14,9 @@ export type FindingCategory =
   | 'possible_public_data_exposure'
   | 'storage_risk'
   | 'cors_risk'
+  | 'sensitive_url_parameter'
+  | 'missing_sri'
+  | 'mixed_content'
   | 'info'
 
 export interface ScanOptions {
@@ -121,4 +125,65 @@ export interface NetworkRequestData {
   requestHeaders: Record<string, string>
   responseHeaders: Record<string, string>
   responseSnippet?: string
+}
+
+// ---------------------------------------------------------------------------
+// Third-party script inventory
+// ---------------------------------------------------------------------------
+
+export interface ThirdPartyScriptDomain {
+  origin: string
+  host: string
+  scriptCount: number
+  /** false if any missing_sri finding references this domain */
+  hasSRI: boolean
+  insecureLoads: number
+  exampleUrls: string[]
+}
+
+export interface ThirdPartyScriptInventory {
+  domains: ThirdPartyScriptDomain[]
+}
+
+// ---------------------------------------------------------------------------
+// Attacker simulation
+// ---------------------------------------------------------------------------
+
+export type ScenarioType =
+  | 'public_data_exposure'
+  | 'auth_session_risk'
+  | 'credential_leakage'
+  | 'internal_recon'
+  | 'client_side_supply_chain_risk'
+
+export type SkillLevel = 'very_low' | 'low' | 'medium'
+
+export type TimeToDiscover =
+  | 'under_1_minute'
+  | 'under_5_minutes'
+  | 'under_15_minutes'
+  | 'under_5_minutes_if_script_executes'
+  | 'under_5_minutes_if_combined_with_xss'
+
+export interface ScenarioEvidence {
+  findingId?: string
+  category: string
+  title: string
+  url: string
+  evidenceSnippet: string
+  source?: string
+}
+
+export interface AttackerScenario {
+  id: string
+  scenarioType: ScenarioType
+  title: string
+  summary: string
+  skillLevel: SkillLevel
+  timeToDiscover: TimeToDiscover
+  impact: 'low' | 'medium' | 'high'
+  confidence: 'low' | 'medium' | 'high'
+  recommendation: string
+  evidence: ScenarioEvidence[]
+  rank: number
 }

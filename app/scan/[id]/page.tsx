@@ -1,11 +1,15 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams } from 'next/navigation'
+import { buildScriptInventory } from '@/lib/analyzers/third-party-scripts'
+import { runAttackerSimulation, SKILL_LABELS, TIME_LABELS, IMPACT_LABELS } from '@/lib/analyzers/attacker-simulation'
+import type { ThirdPartyScriptInventory, AttackerScenario } from '@/lib/types'
 
 interface Scan {
   id: string
   targetUrl: string
+  normalizedOrigin: string
   status: string
   startedAt: string | null
   finishedAt: string | null
@@ -45,12 +49,25 @@ const SEVERITY_STYLES: Record<string, string> = {
   info: 'bg-gray-100 text-gray-600 border-gray-200',
 }
 
+const IMPACT_STYLES: Record<string, string> = {
+  high: 'bg-red-50 text-red-700 border border-red-200',
+  medium: 'bg-amber-50 text-amber-700 border border-amber-200',
+  low: 'bg-blue-50 text-blue-700 border border-blue-200',
+}
+
+const CONFIDENCE_STYLES: Record<string, string> = {
+  high: 'bg-green-50 text-green-700',
+  medium: 'bg-yellow-50 text-yellow-700',
+  low: 'bg-gray-50 text-gray-600',
+}
+
 const CATEGORY_LABELS: Record<string, string> = {
   secret_exposure: 'Secret',
   token_exposure: 'Token',
   hardcoded_password: 'Password',
   insecure_cookie: 'Cookie',
   missing_security_header: 'Header',
+  weak_csp: 'CSP',
   sourcemap_exposure: 'Source Map',
   verbose_error: 'Error Leak',
   framework_leakage: 'Framework',
@@ -58,10 +75,12 @@ const CATEGORY_LABELS: Record<string, string> = {
   possible_public_data_exposure: 'Data Exposure',
   storage_risk: 'Storage',
   cors_risk: 'CORS',
+  sensitive_url_parameter: 'URL Param',
+  missing_sri: 'SRI',
+  mixed_content: 'Mixed Content',
   info: 'Info',
 }
 
-// Findings originating from passive endpoint checks are visually distinguished
 function isPassiveFinding(finding: Finding): boolean {
   return finding.evidence.startsWith('[Passive endpoint check]')
 }
@@ -72,6 +91,146 @@ const STATUS_STYLE: Record<string, string> = {
   completed: 'bg-green-100 text-green-700',
   failed: 'bg-red-100 text-red-700',
 }
+
+// ---------------------------------------------------------------------------
+// Attacker scenario card
+// ---------------------------------------------------------------------------
+
+function ScenarioCard({ scenario }: { scenario: AttackerScenario }) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="w-full text-left px-4 py-4 hover:bg-gray-50 transition-colors"
+      >
+        <div className="flex items-start gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              <span className={`text-xs font-medium px-2 py-0.5 rounded ${IMPACT_STYLES[scenario.impact] || ''}`}>
+                {IMPACT_LABELS[scenario.impact]}
+              </span>
+              <span className="text-xs font-medium px-2 py-0.5 rounded bg-gray-100 text-gray-600">
+                {SKILL_LABELS[scenario.skillLevel]}
+              </span>
+              <span className="text-xs font-medium px-2 py-0.5 rounded bg-gray-100 text-gray-600">
+                {TIME_LABELS[scenario.timeToDiscover]}
+              </span>
+              <span className={`text-xs font-medium px-2 py-0.5 rounded ${CONFIDENCE_STYLES[scenario.confidence] || ''}`}>
+                {scenario.confidence} confidence
+              </span>
+            </div>
+            <p className="text-sm font-semibold text-gray-900">{scenario.title}</p>
+            <p className="text-xs text-gray-600 mt-1 leading-relaxed">{scenario.summary}</p>
+          </div>
+          <div className="shrink-0 flex flex-col items-end gap-1">
+            <span className="text-xs text-gray-400 font-mono">#{scenario.rank}</span>
+            <span className="text-gray-400">{expanded ? '▲' : '▼'}</span>
+          </div>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-gray-100 px-4 py-4 space-y-3 bg-gray-50">
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Recommended first fix</p>
+            <p className="text-sm text-gray-700">{scenario.recommendation}</p>
+          </div>
+          {scenario.evidence.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                Supporting evidence ({scenario.evidence.length})
+              </p>
+              <div className="space-y-1.5">
+                {scenario.evidence.map((ev, i) => (
+                  <div key={i} className="bg-white border border-gray-200 rounded px-3 py-2">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
+                        {CATEGORY_LABELS[ev.category] || ev.category}
+                      </span>
+                      <span className="text-xs font-medium text-gray-800 truncate">{ev.title}</span>
+                    </div>
+                    <p className="text-xs text-gray-500 font-mono truncate">{ev.url}</p>
+                    {ev.evidenceSnippet && (
+                      <p className="text-xs text-gray-400 font-mono mt-0.5 truncate">{ev.evidenceSnippet}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Third-party script inventory
+// ---------------------------------------------------------------------------
+
+function ScriptInventorySection({ inventory }: { inventory: ThirdPartyScriptInventory }) {
+  if (inventory.domains.length === 0) return null
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="px-6 py-4 border-b border-gray-100">
+        <h3 className="text-sm font-semibold text-gray-900">Third-Party Script Inventory</h3>
+        <p className="text-xs text-gray-500 mt-0.5">
+          {inventory.domains.length} external script domain{inventory.domains.length !== 1 ? 's' : ''} observed.
+          Review for supply-chain risk.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-100">
+            <tr>
+              <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Domain</th>
+              <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 w-20">Scripts</th>
+              <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 w-24">SRI</th>
+              <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 w-28">Insecure loads</th>
+              <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Example URL</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {inventory.domains.map(domain => (
+              <tr key={domain.origin} className="hover:bg-gray-50">
+                <td className="px-4 py-2 text-xs font-mono text-gray-800">{domain.host}</td>
+                <td className="px-4 py-2 text-xs text-gray-700">{domain.scriptCount}</td>
+                <td className="px-4 py-2 text-xs">
+                  {domain.hasSRI
+                    ? <span className="text-green-600 font-medium">present</span>
+                    : <span className="text-amber-600 font-medium">missing</span>
+                  }
+                </td>
+                <td className="px-4 py-2 text-xs">
+                  {domain.insecureLoads > 0
+                    ? <span className="text-red-600 font-medium">{domain.insecureLoads} HTTP</span>
+                    : <span className="text-gray-400">—</span>
+                  }
+                </td>
+                <td className="px-4 py-2 text-xs font-mono text-gray-500 truncate max-w-xs">
+                  {domain.exampleUrls[0] ? (
+                    <span title={domain.exampleUrls[0]}>
+                      {domain.exampleUrls[0].length > 60
+                        ? domain.exampleUrls[0].substring(0, 60) + '…'
+                        : domain.exampleUrls[0]}
+                    </span>
+                  ) : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
 
 export default function ScanPage() {
   const { id } = useParams<{ id: string }>()
@@ -100,6 +259,31 @@ export default function ScanPage() {
     return () => clearInterval(interval)
   }, [scan, fetchScan])
 
+  const scriptInventory = useMemo<ThirdPartyScriptInventory>(() => {
+    if (!scan) return { domains: [] }
+    return buildScriptInventory(
+      scan.normalizedOrigin,
+      scan.requests,
+      scan.findings.map(f => ({ category: f.category, assetUrl: f.assetUrl })),
+    )
+  }, [scan])
+
+  const attackerScenarios = useMemo<AttackerScenario[]>(() => {
+    if (!scan || scan.status !== 'completed') return []
+    return runAttackerSimulation(
+      scan.findings.map(f => ({
+        id: f.id,
+        severity: f.severity,
+        category: f.category,
+        title: f.title,
+        url: f.url,
+        evidence: f.evidence,
+        assetUrl: f.assetUrl,
+      })),
+      scriptInventory,
+    )
+  }, [scan, scriptInventory])
+
   if (error) {
     return <div className="text-red-600 bg-red-50 border border-red-200 rounded px-4 py-3">{error}</div>
   }
@@ -108,6 +292,7 @@ export default function ScanPage() {
   }
 
   const isLive = scan.status === 'running' || scan.status === 'pending'
+  const isCompleted = scan.status === 'completed'
 
   const filteredFindings = scan.findings
     .filter(f =>
@@ -142,7 +327,7 @@ export default function ScanPage() {
             )}
           </div>
         </div>
-        {scan.status === 'completed' && (
+        {isCompleted && (
           <div className="flex flex-wrap gap-2">
             <a
               href={`/api/scans/${id}/export?format=json`}
@@ -206,6 +391,36 @@ export default function ScanPage() {
           </div>
         </div>
       )}
+
+      {/* 5-Minute Attacker View */}
+      {isCompleted && (
+        <div className="space-y-3">
+          <div className="flex items-baseline justify-between">
+            <h3 className="text-base font-semibold text-gray-900">5-Minute Attacker View</h3>
+            <span className="text-xs text-gray-400">
+              {attackerScenarios.length} scenario{attackerScenarios.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <p className="text-xs text-gray-500 -mt-1">
+            These scenarios are inferred from public scan findings and are intended to summarise the most plausible short-path risks. They are not proof of exploitation.
+          </p>
+
+          {attackerScenarios.length === 0 ? (
+            <div className="bg-white border border-gray-200 rounded-lg px-6 py-8 text-center">
+              <p className="text-sm text-gray-500">No high-plausibility attacker scenarios identified from the current findings.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {attackerScenarios.map(scenario => (
+                <ScenarioCard key={scenario.id} scenario={scenario} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Third-Party Script Inventory */}
+      {isCompleted && <ScriptInventorySection inventory={scriptInventory} />}
 
       {/* Tabs */}
       <div className="border-b border-gray-200">

@@ -8,11 +8,22 @@
  * block is reserved for Part B (prompt builder / preset system).
  */
 
+import { ThirdPartyScriptInventory, AttackerScenario } from '../types'
+import { buildScriptInventory } from '../analyzers/third-party-scripts'
+import { runAttackerSimulation } from '../analyzers/attacker-simulation'
+
 // ---------------------------------------------------------------------------
 // Schema types
 // ---------------------------------------------------------------------------
 
-export type FindingSource = 'crawl' | 'cookie_analysis' | 'passive_endpoint_check' | 'robots_txt'
+export type FindingSource =
+  | 'crawl'
+  | 'cookie_analysis'
+  | 'passive_endpoint_check'
+  | 'robots_txt'
+  | 'url_parameter'
+  | 'csp_analysis'
+  | 'sri_check'
 
 export interface IngestionExportFinding {
   id: string
@@ -90,6 +101,11 @@ export interface IngestionExport {
   findings: IngestionExportFinding[]
   pages: IngestionExportPage[]
   requests: IngestionExportRequest[]
+  thirdPartyScripts: ThirdPartyScriptInventory
+  attackerSimulation: {
+    version: '1.0'
+    scenarios: AttackerScenario[]
+  }
   handoff: IngestionExportHandoff
 }
 
@@ -146,7 +162,7 @@ export interface ScanForIngestionExport {
 }
 
 // ---------------------------------------------------------------------------
-// Serializer
+// Serializer helpers
 // ---------------------------------------------------------------------------
 
 const SEVERITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2, info: 3 }
@@ -182,8 +198,15 @@ function deriveFindingSource(f: ScanForIngestionExport['findings'][number]): Fin
   if (f.evidence.startsWith('[Passive endpoint check]')) return 'passive_endpoint_check'
   if (f.category === 'insecure_cookie') return 'cookie_analysis'
   if (f.url.endsWith('/robots.txt')) return 'robots_txt'
+  if (f.category === 'sensitive_url_parameter') return 'url_parameter'
+  if (f.category === 'weak_csp') return 'csp_analysis'
+  if (f.category === 'missing_sri' || f.category === 'mixed_content') return 'sri_check'
   return 'crawl'
 }
+
+// ---------------------------------------------------------------------------
+// Main builder
+// ---------------------------------------------------------------------------
 
 export function buildIngestionExport(scan: ScanForIngestionExport): IngestionExport {
   // Deterministic finding order: severity asc-rank, then category asc, then createdAt asc
@@ -201,6 +224,27 @@ export function buildIngestionExport(scan: ScanForIngestionExport): IngestionExp
   } catch {
     // Leave empty if malformed
   }
+
+  // Build third-party script inventory from network requests
+  const scriptInventory = buildScriptInventory(
+    scan.normalizedOrigin,
+    scan.requests.map(r => ({ url: r.url, resourceType: r.resourceType })),
+    scan.findings.map(f => ({ category: f.category, assetUrl: f.assetUrl })),
+  )
+
+  // Run attacker simulation
+  const scenarios = runAttackerSimulation(
+    scan.findings.map(f => ({
+      id: f.id,
+      severity: f.severity,
+      category: f.category,
+      title: f.title,
+      url: f.url,
+      evidence: f.evidence,
+      assetUrl: f.assetUrl,
+    })),
+    scriptInventory,
+  )
 
   return {
     version: '1.0',
@@ -261,9 +305,15 @@ export function buildIngestionExport(scan: ScanForIngestionExport): IngestionExp
       statusCode: r.statusCode,
       contentType: extractContentType(r.responseHeadersJson),
     })),
+    thirdPartyScripts: scriptInventory,
+    attackerSimulation: {
+      version: '1.0',
+      scenarios,
+    },
     handoff: {
       intendedUse: 'ingestion_by_coding_agent',
       recommendedWorkflow: [
+        'review attacker simulation scenarios — they summarise the highest-plausibility short-path risks',
         'triage real issues vs false positives using evidence snippets',
         'prioritize by severity and confidence score',
         'fix safe code-level issues first (cookies, headers, storage)',

@@ -2,11 +2,14 @@ import { FindingInput, PageArtifacts } from '../types'
 import { detectSecrets, detectNextPublicEnv } from './secrets'
 import { detectHardcodedPasswords } from './passwords'
 import { detectMissingHeaders } from './headers'
+import { analyzeCSP } from './csp'
 import { detectInsecureCookies } from './cookies'
 import { detectStorageRisks } from './storage'
 import { detectSourceMapReferences, checkSourceMapAccessible } from './sourcemaps'
 import { detectFrameworkLeakage, detectConsoleLeakage } from './framework'
 import { detectSuspiciousEndpoints } from './endpoints'
+import { detectSensitiveUrlParams } from './url-params'
+import { detectSRIAndMixedContent } from '../analyzers/third-party-scripts'
 
 export async function runDetectors(
   artifacts: PageArtifacts,
@@ -22,6 +25,7 @@ export async function runDetectors(
     checkSuspiciousEndpoints: boolean
     inspectInlineScripts: boolean
     inspectJsBundles: boolean
+    inspectNetworkRequests: boolean
   }
 ): Promise<FindingInput[]> {
   const findings: FindingInput[] = []
@@ -29,6 +33,14 @@ export async function runDetectors(
 
   if (options.inspectHeaders && Object.keys(artifacts.headers).length > 0) {
     findings.push(...detectMissingHeaders(artifacts.headers, url))
+
+    // CSP quality analysis — only runs when CSP is present
+    const lowerHeaders: Record<string, string> = {}
+    for (const [k, v] of Object.entries(artifacts.headers)) lowerHeaders[k.toLowerCase()] = v
+    const cspValue = lowerHeaders['content-security-policy']
+    if (cspValue) {
+      findings.push(...analyzeCSP(cspValue, url))
+    }
   }
 
   if (options.inspectCookies && artifacts.cookies.length > 0) {
@@ -72,6 +84,27 @@ export async function runDetectors(
 
   if (options.detectSourceMaps && artifacts.html) {
     findings.push(...detectSourceMapReferences(artifacts.html, url, url))
+  }
+
+  // SRI and mixed-content detection from HTML script tags
+  if (options.inspectJsBundles && artifacts.html) {
+    let pageOrigin: string
+    try {
+      pageOrigin = new URL(url).origin
+    } catch {
+      pageOrigin = ''
+    }
+    if (pageOrigin) {
+      findings.push(...detectSRIAndMixedContent(artifacts.html, url, pageOrigin))
+    }
+  }
+
+  // Sensitive URL parameters — page URL + captured network request URLs
+  if (options.inspectNetworkRequests || options.searchSecrets) {
+    findings.push(...detectSensitiveUrlParams(url))
+    for (const req of artifacts.networkRequests) {
+      findings.push(...detectSensitiveUrlParams(req.url))
+    }
   }
 
   return deduplicateFindings(findings)

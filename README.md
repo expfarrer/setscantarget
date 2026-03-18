@@ -9,10 +9,13 @@ A client-side security review tool built with Next.js, Playwright, Prisma, and S
 ## What it detects
 
 - Missing security response headers (CSP, HSTS, X-Content-Type-Options, Referrer-Policy, etc.)
+- **CSP quality analysis** — goes beyond presence/absence; parses the policy and flags `unsafe-inline`, `unsafe-eval`, wildcard sources, missing `object-src none`, missing `base-uri`, missing `frame-ancestors`, and other weak patterns
 - **Enhanced auth/session cookie analysis** — identifies auth/session cookies by name (session, sid, jwt, next-auth, supabase, clerk, firebase, etc.), flags missing HttpOnly/Secure/SameSite with higher severity, detects long-lived session cookies and SameSite=None misuse
 - Exposed source maps (.map files publicly accessible)
 - Secrets and tokens in HTML, inline scripts, and JS bundles (API keys, JWTs, AWS keys, Bearer tokens, PEM private keys)
 - **Hardcoded passwords** — assignments (`password: "..."`, `db_password = "..."`), ENV-style variables (`DB_PASSWORD=value`), and credential-bearing connection URIs (`postgres://`, `mysql://`, `mariadb://`, `mongodb://`, `redis://`, `amqps://`, `ftp://`, `sftp://`, `smtp://`)
+- **Sensitive data in URL parameters** — detects token, api_key, password, jwt, session, and other sensitive parameter names in page and network request URLs; values are redacted in evidence; severity scaled by entropy and value plausibility
+- **Third-party script inventory** — enumerates all third-party script domains observed in network traffic, grouped by origin; flags missing Subresource Integrity (SRI) on third-party script tags and HTTP-loaded scripts on HTTPS pages (mixed content)
 - NEXT_PUBLIC_ environment variable leakage
 - Framework/version leakage in HTML content
 - Stack traces and verbose errors in the page or browser console
@@ -112,13 +115,21 @@ A structured report specifically formatted for consumption by a coding agent (e.
   "findings": [ ... ],
   "pages": [ ... ],
   "requests": [ ... ],
+  "thirdPartyScripts": {
+    "domains": [
+      { "origin": "https://cdn.example.com", "host": "cdn.example.com", "scriptCount": 3, "hasSRI": false, "insecureLoads": 0, "exampleUrls": ["..."] }
+    ]
+  },
+  "attackerSimulation": {
+    "version": "1.0",
+    "scenarios": [
+      { "id": "credential_leakage", "title": "...", "impact": "high", "skillLevel": "very_low", "recommendation": "...", "evidence": [...] }
+    ]
+  },
   "handoff": {
     "intendedUse": "ingestion_by_coding_agent",
-    "recommendedWorkflow": [ "triage findings", "prioritize by severity", "..." ],
-    "futurePromptPreset": {
-      "enabled": false,
-      "notes": "Reserved for future prompt builder support"
-    }
+    "recommendedWorkflow": [ "review attacker simulation scenarios", "triage by severity", "..." ],
+    "futurePromptPreset": { "enabled": false, "notes": "Reserved for future prompt builder support" }
   }
 }
 ```
@@ -159,15 +170,92 @@ lib/
     secrets.ts                      — API keys, JWTs, tokens, private keys
     passwords.ts                    — Hardcoded passwords, ENV vars, connection URIs
     headers.ts                      — Security header presence checks
+    csp.ts                          — CSP quality analysis (unsafe-inline, wildcards, missing directives)
     cookies.ts                      — Auth/session cookie analysis with enhanced severity
     storage.ts                      — localStorage/sessionStorage risk detection
     sourcemaps.ts                   — Source map reference and accessibility checks
     framework.ts                    — Framework leakage, stack traces, internal URLs
     endpoints.ts                    — Suspicious endpoints and robots.txt analysis
     passive-endpoints.ts            — Opt-in passive GET checks against fixed path allowlist
+    url-params.ts                   — Sensitive data in URL query parameters
+  analyzers/
+    third-party-scripts.ts          — Third-party script inventory + SRI/mixed-content findings
+    attacker-simulation.ts          — 5-Minute Attacker simulation (rule-based scenario engine)
   exports/
     ingestion-json.ts               — Ingestion report schema, types, and serializer
 ```
+
+---
+
+## CSP Quality Analysis
+
+When a `Content-Security-Policy` header is present, the scanner parses and analyzes the policy for weak or incomplete directives. Findings are generated for:
+
+- `'unsafe-inline'` in `script-src` or `default-src` → **high**
+- `'unsafe-eval'` → **medium**
+- Wildcard (`*`) script sources → **high**
+- Missing `object-src 'none'` → **medium**
+- Missing `base-uri` → **low**
+- Missing `frame-ancestors` → **info**
+- Wildcard `connect-src` or `frame-src` → **low/medium**
+
+If no CSP is present, the existing missing-header finding is retained.
+
+---
+
+## Sensitive Data in URL Parameters
+
+The scanner checks page URLs and captured network request URLs for query parameters with sensitive names such as `token`, `api_key`, `password`, `jwt`, `session`, `client_secret`, and others. When found:
+
+- Values are **redacted** in the evidence output (only first 4 chars shown)
+- Severity is scaled by entropy and value length: high-entropy long values → **high**; placeholders → **low**
+- Findings are deduplicated by URL path + parameter name
+
+---
+
+## Third-Party Script Inventory
+
+After each scan, a supply-chain inventory is computed from captured network requests. The inventory groups all third-party scripts by origin and shows:
+
+- Domain / origin
+- Number of scripts loaded
+- Whether SRI was observed (derived from `missing_sri` findings)
+- Number of HTTP-protocol loads on HTTPS pages
+- Example URLs
+
+`missing_sri` findings are generated during crawl for any third-party `<script src>` tag without an `integrity=` attribute. `mixed_content` findings are generated when an HTTPS page loads a script over HTTP.
+
+The inventory appears in the results UI under **Third-Party Script Inventory** and is included in the ingestion JSON export under `thirdPartyScripts`.
+
+---
+
+## 5-Minute Attacker Simulation
+
+A post-scan analysis layer that correlates findings into conservative, rule-based attacker scenarios. It answers:
+
+> "If I were a curious low-skill attacker with only a browser and a few minutes, what would I try first?"
+
+**This is not an exploitation engine.** No additional requests are made. Scenarios are generated from the findings already collected during the scan.
+
+### Scenario types
+
+| ID | Title | Skill | Time |
+|----|-------|-------|------|
+| `credential_leakage` | Credential-like secrets in public artifacts | Very low | < 1 min |
+| `public_data_exposure` | Unauthenticated API data discoverable | Very low | < 5 min |
+| `auth_session_risk` | Auth/session material accessible to scripts | Medium | < 5 min if XSS |
+| `internal_recon` | Internal structure revealed via public assets | Low | < 5 min |
+| `client_side_supply_chain_risk` | Third-party script supply chain risk | Low | < 5 min if XSS |
+
+### Ranking
+
+Scenarios are ranked by a composite score of: impact × 3 + confidence × 2 + skill score + time score. Higher impact, higher confidence, lower skill required, and faster discovery → higher rank.
+
+### Note
+
+> These scenarios are inferred from public scan findings and are intended to summarise the most plausible short-path risks. They are not proof of exploitation.
+
+Scenarios appear in the results UI under **5-Minute Attacker View** and in the ingestion JSON export under `attackerSimulation`.
 
 ---
 
