@@ -90,3 +90,62 @@ model ScanLog {
   createdAt DateTime @default(now())
   scan      Scan     @relation(fields: [scanId], references: [id], onDelete: Cascade)
 }
+
+model PRReview {
+  id                    String            @id @default(cuid())
+  provider              String            @default("github")
+  prUrl                 String
+  repoOwner             String
+  repoName              String
+  prNumber              Int
+  status                String            @default("pending")
+  title                 String?
+  author                String?
+  headRef               String?
+  baseRef               String?
+  checksStatus          String?
+  reviewStatus          String?
+  overallRisk           String?
+  mergeRecommendation   String?
+  maintainabilityStatus String?
+  highRiskCount         Int               @default(0)
+  exposureRiskCount     Int               @default(0)
+  testGapCount          Int               @default(0)
+  anatomyLogicPct       Float             @default(0)
+  anatomyTestsPct       Float             @default(0)
+  anatomyConfigPct      Float             @default(0)
+  anatomyNoisePct       Float             @default(0)
+  reviewerAssigned      Boolean?
+  prSize                String?
+  stale                 Boolean?
+  rawPayloadJson        String?
+  errorMessage          String?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  findings              PRReviewFinding[]
+
+  @@index([status])
+}
+
+model PRReviewFinding {
+  id           String   @id @default(cuid())
+  prReviewId   String
+  category     String
+  severity     String
+  ruleId       String
+  title        String
+  summary      String
+  whyFlagged   String
+  suggestion   String
+  filePath     String
+  startLine    Int?
+  endLine      Int?
+  snippet      String?
+  scoreImpact  Int      @default(0)
+  metadataJson String?
+  createdAt    DateTime @default(now())
+  prReview     PRReview @relation(fields: [prReviewId], references: [id], onDelete: Cascade)
+
+  @@index([prReviewId])
+  @@index([severity])
+}

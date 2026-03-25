@@ -5,7 +5,9 @@
       "Bash(npm run:*)",
       "Bash(npx tsc:*)",
       "Bash(git push:*)",
-      "Bash(git tag:*)"
+      "Bash(git tag:*)",
+      "Bash(npx prisma:*)",
+      "Bash(git:*)"
     ]
   }
 }
