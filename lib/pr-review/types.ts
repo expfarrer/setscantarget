@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------------------
-// PR Review types
+// PR Review — shared types
+// Used by API routes, runner, analyzers, and serializer.
 // ---------------------------------------------------------------------------
 
 export type PRReviewStatus = 'pending' | 'running' | 'completed' | 'failed'
@@ -16,6 +17,10 @@ export type PRFindingCategory =
   | 'security'
   | 'exposure'
   | 'workflow'
+
+// ---------------------------------------------------------------------------
+// Normalized GitHub PR payload (internal, not exposed to client)
+// ---------------------------------------------------------------------------
 
 export interface NormalizedPRFile {
   path: string
@@ -39,6 +44,10 @@ export interface NormalizedPRPayload {
   files: NormalizedPRFile[]
 }
 
+// ---------------------------------------------------------------------------
+// Analyzer contract
+// ---------------------------------------------------------------------------
+
 export interface PRReviewFindingDraft {
   category: PRFindingCategory
   severity: PRSeverity
@@ -51,6 +60,7 @@ export interface PRReviewFindingDraft {
     filePath: string
     startLine?: number
     endLine?: number
+    // Raw snippet — runner decides whether to redact before persisting
     snippet?: string
   }
   scoreImpact?: number
@@ -67,6 +77,11 @@ export interface AnalyzerOutput {
   summaryPatches?: Partial<PRReviewResult['summary']>
   workflowPatches?: Partial<PRReviewResult['workflow']>
 }
+
+// ---------------------------------------------------------------------------
+// Client-facing DTO — returned by GET /api/pr-reviews/[id]
+// Snippets are redacted by default; canReveal signals a reveal path exists.
+// ---------------------------------------------------------------------------
 
 export interface PRReviewResult {
   id: string
@@ -114,7 +129,12 @@ export interface PRReviewResult {
       filePath: string
       startLine?: number
       endLine?: number
+      // snippet is always the safe/redacted form in this DTO
       snippet?: string
+      // true when the snippet was sanitised before being returned
+      isRedacted: boolean
+      // true when an unredacted form exists and can be fetched via a reveal endpoint (Phase 4+)
+      canReveal: boolean
     }
     metadata?: Record<string, unknown>
   }>

@@ -16,7 +16,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     if (!review) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-    // Parse stored payload for focus files and workflow notes
+    // Parse stored focus files and workflow notes — rawPayloadJson is internal and not forwarded
     let focusFiles: PRReviewResult['focusFiles'] = []
     let workflowNotes: string[] = []
     if (review.rawPayloadJson) {
@@ -28,7 +28,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         focusFiles = raw.focusFiles ?? []
         workflowNotes = raw.workflowNotes ?? []
       } catch {
-        // malformed — ignore
+        // malformed payload — degrade gracefully
       }
     }
 
@@ -76,9 +76,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           filePath: f.filePath,
           startLine: f.startLine ?? undefined,
           endLine: f.endLine ?? undefined,
+          // Always return the safe/redacted form — revealedSnippet is never included here
           snippet: f.snippet ?? undefined,
+          isRedacted: f.isRedacted,
+          canReveal: f.revealedSnippet != null,
         },
-        metadata: f.metadataJson ? (JSON.parse(f.metadataJson) as Record<string, unknown>) : undefined,
+        metadata: f.metadataJson
+          ? (JSON.parse(f.metadataJson) as Record<string, unknown>)
+          : undefined,
       })),
       workflow: {
         reviewerAssigned: review.reviewerAssigned ?? undefined,

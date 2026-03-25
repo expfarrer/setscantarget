@@ -128,24 +128,31 @@ model PRReview {
 }
 
 model PRReviewFinding {
-  id           String   @id @default(cuid())
-  prReviewId   String
-  category     String
-  severity     String
-  ruleId       String
-  title        String
-  summary      String
-  whyFlagged   String
-  suggestion   String
-  filePath     String
-  startLine    Int?
-  endLine      Int?
-  snippet      String?
-  scoreImpact  Int      @default(0)
-  metadataJson String?
-  createdAt    DateTime @default(now())
-  prReview     PRReview @relation(fields: [prReviewId], references: [id], onDelete: Cascade)
+  id              String   @id @default(cuid())
+  prReviewId      String
+  category        String
+  severity        String
+  ruleId          String
+  title           String
+  summary         String
+  whyFlagged      String
+  suggestion      String
+  filePath        String
+  startLine       Int?
+  endLine         Int?
+  // snippet holds the safe/redacted form returned by default.
+  // revealedSnippet holds the full unredacted content, never returned by GET without explicit reveal.
+  // isRedacted flags whether the content was sanitised before storage.
+  snippet         String?
+  isRedacted      Boolean  @default(false)
+  redactedSnippet String?
+  revealedSnippet String?
+  scoreImpact     Int      @default(0)
+  metadataJson    String?
+  createdAt       DateTime @default(now())
+  prReview        PRReview @relation(fields: [prReviewId], references: [id], onDelete: Cascade)
 
   @@index([prReviewId])
   @@index([severity])
+  @@index([category])
 }

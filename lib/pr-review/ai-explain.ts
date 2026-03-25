@@ -1,38 +1,30 @@
-import type { PRReviewFindingDraft } from './types'
-
 /**
  * Optional AI enrichment for PR review findings.
+ * Server-only — never imported from client code.
  *
- * Only runs when:
- *   - OPENAI_API_KEY is set
- *   - PR_REVIEW_AI_ENABLED=true
- *
- * Failure is non-fatal — deterministic content is always the fallback.
+ * Only runs when canUsePRReviewAI() returns true.
+ * Failure is always non-fatal — deterministic content is the fallback.
  */
-
-const AI_ENABLED =
-  typeof process !== 'undefined' &&
-  process.env.PR_REVIEW_AI_ENABLED === 'true' &&
-  !!process.env.OPENAI_API_KEY
+import { canUsePRReviewAI, getPRReviewAIConfig } from './config'
+import type { PRReviewFindingDraft } from './types'
 
 export async function aiExplainFindings(
   findings: PRReviewFindingDraft[],
   prTitle: string,
 ): Promise<PRReviewFindingDraft[]> {
-  if (!AI_ENABLED || findings.length === 0) return findings
+  if (!canUsePRReviewAI() || findings.length === 0) return findings
 
   try {
     const highPriority = findings.filter(f => f.severity === 'high').slice(0, 5)
     if (highPriority.length === 0) return findings
 
-    const prompt = buildPrompt(highPriority, prTitle)
-    const enriched = await callOpenAI(prompt)
-
+    const enriched = await callOpenAI(buildPrompt(highPriority, prTitle))
     if (!enriched) return findings
 
-    // Merge AI explanations back into findings
     return findings.map(f => {
-      const match = enriched.find(e => e.ruleId === f.ruleId && e.filePath === f.evidence.filePath)
+      const match = enriched.find(
+        e => e.ruleId === f.ruleId && e.filePath === f.evidence.filePath,
+      )
       if (!match) return f
       return {
         ...f,
@@ -47,21 +39,19 @@ export async function aiExplainFindings(
   }
 }
 
-function buildPrompt(
-  findings: PRReviewFindingDraft[],
-  prTitle: string,
-): string {
+function buildPrompt(findings: PRReviewFindingDraft[], prTitle: string): string {
   const items = findings.map(f => ({
     ruleId: f.ruleId,
     filePath: f.evidence.filePath,
     category: f.category,
     severity: f.severity,
-    snippet: f.evidence.snippet?.slice(0, 200) || '',
+    // Use only a short snippet in the prompt — avoid sending revealed secrets to OpenAI
+    snippet: f.evidence.snippet?.slice(0, 150) ?? '',
   }))
 
   return `You are a senior software engineer reviewing a GitHub PR titled: "${prTitle}".
 
-For each finding below, improve the summary, whyFlagged, and suggestion fields to be more specific and actionable based on the code snippet provided. Be concise (2-3 sentences each). Return a JSON array.
+For each finding below, improve the summary, whyFlagged, and suggestion fields to be more specific and actionable. Be concise (2-3 sentences each). Return a JSON array only.
 
 Findings:
 ${JSON.stringify(items, null, 2)}
@@ -69,10 +59,17 @@ ${JSON.stringify(items, null, 2)}
 Return ONLY a JSON array with objects: { ruleId, filePath, summary, whyFlagged, suggestion }`
 }
 
-async function callOpenAI(
-  prompt: string,
-): Promise<Array<{ ruleId: string; filePath: string; summary: string; whyFlagged: string; suggestion: string }> | null> {
-  const apiKey = process.env.OPENAI_API_KEY!
+type EnrichedFinding = {
+  ruleId: string
+  filePath: string
+  summary: string
+  whyFlagged: string
+  suggestion: string
+}
+
+async function callOpenAI(prompt: string): Promise<EnrichedFinding[] | null> {
+  const { apiKey, model } = getPRReviewAIConfig()
+
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -80,11 +77,10 @@ async function callOpenAI(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
+      model,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
       max_tokens: 1500,
-      response_format: { type: 'json_object' },
     }),
   })
 

@@ -9,6 +9,7 @@ import { runWorkflowAnalyzer } from './analyzers/workflow'
 import { buildFocusFiles } from './analyzers/focus-files'
 import { computeScore } from './scoring'
 import { aiExplainFindings } from './ai-explain'
+import { processSnippet } from './redact'
 import type { NormalizedPRPayload, PRReviewFindingDraft, AnalyzerOutput } from './types'
 
 export async function runPRReview(reviewId: string): Promise<void> {
@@ -56,7 +57,7 @@ async function performReview(
     console.log(`[PR Review ${reviewId}] Fetched ${pr.files.length} files from GitHub`)
   }
 
-  // Store raw payload for debugging
+  // Store PR metadata — rawPayloadJson is internal debug data, never forwarded raw to client
   await prisma.pRReview.update({
     where: { id: reviewId },
     data: {
@@ -98,11 +99,11 @@ async function performReview(
   // 3. Merge all findings
   let allFindings: PRReviewFindingDraft[] = analyzerResults.flatMap(r => r.findings)
 
-  // 4. Optional AI enrichment
+  // 4. Optional AI enrichment (non-fatal)
   try {
     allFindings = await aiExplainFindings(allFindings, pr.title)
   } catch {
-    // non-fatal
+    // AI failure must never fail the review job
   }
 
   // 5. Build focus files
@@ -114,9 +115,9 @@ async function performReview(
     pr.checksStatus,
   )
 
-  // 7. Merge summary patches from analyzers
+  // 7. Merge summary/workflow patches from analyzers
   let anatomy = { logic: 0, tests: 0, config: 0, noise: 0 }
-  let maintainabilityStatus: string = 'neutral'
+  let maintainabilityStatus = 'neutral'
   let exposureRiskCount = 0
   let testGapCount = 0
   const workflowNotes: string[] = []
@@ -135,10 +136,16 @@ async function performReview(
     if (result.workflowPatches?.stale !== undefined) stale = result.workflowPatches.stale
   }
 
-  // 8. Persist findings
+  // 8. Persist findings with redaction applied at the storage boundary
   console.log(`[PR Review ${reviewId}] Persisting ${allFindings.length} finding(s)`)
 
   for (const f of allFindings) {
+    const { snippet, redactedSnippet, revealedSnippet, isRedacted } = processSnippet(
+      f.evidence.snippet,
+      f.category,
+      f.ruleId,
+    )
+
     await prisma.pRReviewFinding.create({
       data: {
         prReviewId: reviewId,
@@ -152,18 +159,17 @@ async function performReview(
         filePath: f.evidence.filePath,
         startLine: f.evidence.startLine,
         endLine: f.evidence.endLine,
-        snippet: f.evidence.snippet?.slice(0, 1000),
+        snippet: snippet?.slice(0, 1000),
+        isRedacted,
+        redactedSnippet: redactedSnippet?.slice(0, 1000),
+        revealedSnippet: revealedSnippet?.slice(0, 1000),
         scoreImpact: f.scoreImpact ?? 0,
         metadataJson: f.metadata ? JSON.stringify(f.metadata) : null,
       },
     })
   }
 
-  // 9. Persist focus files as metadata on the review (stored in rawPayloadJson extension)
-  // Store focus files in a separate field via JSON extension in the rawPayload
-  const focusJson = JSON.stringify(focusFiles)
-
-  // 10. Update PRReview to completed
+  // 9. Update PRReview to completed — store focus files and workflow notes in rawPayloadJson
   await prisma.pRReview.update({
     where: { id: reviewId },
     data: {
@@ -181,8 +187,7 @@ async function performReview(
       reviewerAssigned,
       prSize,
       stale,
-      // Store focus files JSON appended to raw payload field
-      rawPayloadJson: JSON.stringify({ pr, focusFiles, workflowNotes }),
+      rawPayloadJson: JSON.stringify({ focusFiles, workflowNotes }),
     },
   })
 
