@@ -4,6 +4,14 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import type { PRReviewResult } from '@/lib/pr-review/types'
 
 // ---------------------------------------------------------------------------
+// Display helpers
+// ---------------------------------------------------------------------------
+
+function capFirst(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+// ---------------------------------------------------------------------------
 // Style maps — shared across components
 // ---------------------------------------------------------------------------
 
@@ -19,9 +27,10 @@ const RISK_STYLES: Record<string, string> = {
   low:    'bg-green-100 text-green-700',
 }
 
+// Labels: Pass / Review / Block per UI vocabulary
 const RECOMMENDATION_STYLES: Record<string, { bg: string; label: string }> = {
-  'block':            { bg: 'bg-red-600 text-white',   label: 'Block Merge' },
-  'review-carefully': { bg: 'bg-amber-500 text-white', label: 'Review Carefully' },
+  'block':            { bg: 'bg-red-600 text-white',   label: 'Block' },
+  'review-carefully': { bg: 'bg-amber-500 text-white', label: 'Review' },
   'pass':             { bg: 'bg-green-600 text-white', label: 'Pass' },
 }
 
@@ -42,6 +51,7 @@ const CHECKS_STYLES: Record<string, string> = {
   unknown: 'text-gray-500',
 }
 
+// Full labels for inline header use
 const CHECKS_LABELS: Record<string, string> = {
   pass:    'Checks passing',
   warn:    'Checks warning',
@@ -49,11 +59,26 @@ const CHECKS_LABELS: Record<string, string> = {
   unknown: 'Checks unknown',
 }
 
+// Short labels for sidebar rows
+const CHECKS_SHORT: Record<string, string> = {
+  pass:    'Passing',
+  warn:    'Warning',
+  fail:    'Failing',
+  unknown: 'Unknown',
+}
+
 const STATUS_BADGE: Record<string, string> = {
   pending:   'bg-gray-100 text-gray-600',
   running:   'bg-blue-100 text-blue-700',
   completed: 'bg-green-100 text-green-700',
   failed:    'bg-red-100 text-red-700',
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  pending:   'Pending',
+  running:   'Running',
+  completed: 'Completed',
+  failed:    'Failed',
 }
 
 // ---------------------------------------------------------------------------
@@ -103,11 +128,8 @@ function EvidenceViewer({
             <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
             </svg>
-            Redacted
+            Sensitive data hidden
           </span>
-        )}
-        {!evidence.isRedacted && evidence.canReveal && (
-          <span className="text-xs text-gray-400 italic shrink-0">full content available</span>
         )}
       </div>
       {evidence.snippet ? (
@@ -140,7 +162,7 @@ function FindingCard({ finding }: { finding: PRReviewResult['findings'][number] 
           <div className="flex-1 min-w-0">
             <div className="flex flex-wrap gap-1.5 mb-1.5">
               <span className={`text-xs font-medium px-2 py-0.5 rounded border ${sev}`}>
-                {finding.severity.toUpperCase()}
+                {capFirst(finding.severity)}
               </span>
               <span className="text-xs font-medium px-2 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200">
                 {cat}
@@ -158,11 +180,6 @@ function FindingCard({ finding }: { finding: PRReviewResult['findings'][number] 
 
       {expanded && (
         <div className="border-t border-gray-100 px-4 py-3 space-y-3 bg-gray-50">
-          <section>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Summary</p>
-            <p className="text-sm text-gray-700 leading-relaxed">{finding.summary}</p>
-          </section>
-
           <section>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Why Flagged</p>
             <p className="text-sm text-gray-700 leading-relaxed">{finding.whyFlagged}</p>
@@ -213,7 +230,7 @@ function FocusList({ files }: { files: PRReviewResult['focusFiles'] }) {
   if (files.length === 0) return null
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4">
-      <h3 className="text-sm font-semibold text-gray-900 mb-3">Start Here — Review Focus</h3>
+      <h3 className="text-sm font-semibold text-gray-900 mb-3">Start Here</h3>
       <div className="space-y-0">
         {files.map((f, i) => (
           <div
@@ -227,7 +244,7 @@ function FocusList({ files }: { files: PRReviewResult['focusFiles'] }) {
                 <span
                   className={`shrink-0 text-xs font-medium px-1.5 py-0.5 rounded border ${SEVERITY_STYLES[f.severity] || ''}`}
                 >
-                  {f.severity}
+                  {capFirst(f.severity)}
                 </span>
               </div>
               <p className="text-xs text-gray-500 leading-relaxed">{f.reason}</p>
@@ -314,11 +331,11 @@ function SummaryCards({ summary }: { summary: PRReviewResult['summary'] }) {
       <div className="bg-white rounded-lg border border-gray-200 p-4">
         <p className="text-xs text-gray-500 mb-2">Overall Risk</p>
         <span className={`text-sm font-semibold px-2 py-0.5 rounded ${riskStyle}`}>
-          {summary.overallRisk.toUpperCase()}
+          {capFirst(summary.overallRisk)}
         </span>
       </div>
       <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <p className="text-xs text-gray-500 mb-1">High Risk</p>
+        <p className="text-xs text-gray-500 mb-1">High Severity</p>
         <p className={`text-2xl font-bold ${summary.highRiskCount > 0 ? 'text-red-600' : 'text-gray-400'}`}>
           {summary.highRiskCount}
         </p>
@@ -450,7 +467,7 @@ function SidebarPanels({
         <div className="bg-red-50 border border-red-200 rounded-xl p-4">
           <h3 className="text-sm font-semibold text-red-800 mb-2">Exposure Risks</h3>
           <p className="text-xs text-red-700 leading-relaxed mb-2">
-            {summary.exposureRiskCount} exposure-related finding(s) detected. Review before merging.
+            {summary.exposureRiskCount} exposure-related finding{summary.exposureRiskCount !== 1 ? 's' : ''} detected. Review before merging.
           </p>
           <div className="space-y-1">
             {exposureFindings.slice(0, 3).map(f => (
@@ -465,16 +482,16 @@ function SidebarPanels({
 
       {/* Workflow Health */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
-        <h3 className="text-sm font-semibold text-gray-900 mb-3">Workflow Health</h3>
+        <h3 className="text-sm font-semibold text-gray-900 mb-3">Workflow</h3>
         <div className="space-y-2">
           <div className="flex justify-between text-xs">
-            <span className="text-gray-500">Reviewer assigned</span>
+            <span className="text-gray-500">Reviewer</span>
             <span className={`font-medium ${
               workflow.reviewerAssigned === undefined ? 'text-gray-400' :
               workflow.reviewerAssigned ? 'text-green-700' : 'text-amber-600'
             }`}>
               {workflow.reviewerAssigned === undefined ? '—' :
-               workflow.reviewerAssigned ? 'Yes' : 'No'}
+               workflow.reviewerAssigned ? 'Assigned' : 'Not assigned'}
             </span>
           </div>
           <div className="flex justify-between text-xs">
@@ -483,7 +500,7 @@ function SidebarPanels({
               workflow.prSize === 'large' ? 'text-amber-600' :
               workflow.prSize == null ? 'text-gray-400' : 'text-gray-700'
             }`}>
-              {workflow.prSize ?? '—'}
+              {workflow.prSize ? capFirst(workflow.prSize) : '—'}
             </span>
           </div>
           <div className="flex justify-between text-xs">
@@ -498,7 +515,7 @@ function SidebarPanels({
           <div className="flex justify-between text-xs">
             <span className="text-gray-500">CI checks</span>
             <span className={`font-medium ${CHECKS_STYLES[pr.checksStatus]}`}>
-              {pr.checksStatus}
+              {CHECKS_SHORT[pr.checksStatus] ?? pr.checksStatus}
             </span>
           </div>
         </div>
@@ -547,7 +564,7 @@ function ReviewDashboard({ result }: { result: PRReviewResult }) {
 // Status / progress states
 // ---------------------------------------------------------------------------
 
-function RunningBanner({ reviewId }: { reviewId: string }) {
+function RunningBanner() {
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
       <div className="inline-flex items-center gap-2 text-blue-600 mb-3">
@@ -558,9 +575,8 @@ function RunningBanner({ reviewId }: { reviewId: string }) {
         <span className="text-sm font-medium">Analysis in progress…</span>
       </div>
       <p className="text-xs text-gray-500">
-        Fetching diff, running checks. This usually completes in under 15 seconds.
+        Fetching diff and running checks. This usually completes in under 15 seconds.
       </p>
-      <p className="text-xs text-gray-400 mt-1 font-mono">{reviewId}</p>
     </div>
   )
 }
@@ -641,16 +657,16 @@ function RecentReviews({
               <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                 {review.highRiskCount > 0 && (
                   <span className="text-xs font-medium text-red-700 bg-red-50 px-2 py-0.5 rounded">
-                    {review.highRiskCount} high
+                    {review.highRiskCount} High
                   </span>
                 )}
                 {review.overallRisk && (
                   <span className={`text-xs font-medium px-2 py-0.5 rounded ${RISK_STYLES[review.overallRisk] || ''}`}>
-                    {review.overallRisk} risk
+                    {capFirst(review.overallRisk)} Risk
                   </span>
                 )}
                 <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${STATUS_BADGE[review.status] || STATUS_BADGE.pending}`}>
-                  {review.status}
+                  {STATUS_LABELS[review.status] ?? capFirst(review.status)}
                 </span>
               </div>
             </button>
@@ -780,12 +796,13 @@ export default function PRReviewPage() {
   }
 
   // ------------------------------------------------------------------
-  // Retry failed review (Phase 2 rerun support)
+  // Retry failed review
   // ------------------------------------------------------------------
 
   const handleRetry = useCallback(async () => {
     if (!currentReviewId) return
     setRetrying(true)
+    setInputError('')
     try {
       const res = await fetch(`/api/pr-reviews/${currentReviewId}/start`, { method: 'POST' })
       if (!res.ok) {
@@ -886,9 +903,7 @@ export default function PRReviewPage() {
       {/* Active result area */}
       {result && (
         <div className="space-y-6">
-          {isRunning && currentReviewId && (
-            <RunningBanner reviewId={currentReviewId} />
-          )}
+          {isRunning && <RunningBanner />}
           {result.status === 'failed' && (
             <FailedBanner
               result={result}
