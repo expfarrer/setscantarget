@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import { version } from '../package.json'
+import { NavBar } from './_components/NavBar'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -23,20 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <h1 className="text-lg font-semibold text-gray-900">Site Security Review Scanner</h1>
               <p className="text-xs text-gray-500">For authorized testing only</p>
             </div>
-            <nav className="flex items-center gap-1">
-              <a
-                href="/"
-                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
-              >
-                Web Scan
-              </a>
-              <a
-                href="/pr-review"
-                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
-              >
-                PR Review
-              </a>
-            </nav>
+            <NavBar />
           </div>
         </header>
         <main className="max-w-6xl mx-auto px-6 py-8">{children}</main>
