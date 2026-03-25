@@ -8,7 +8,9 @@
       "Bash(git tag:*)",
       "Bash(npx prisma:*)",
       "Bash(git:*)",
-      "Bash(gh repo:*)"
+      "Bash(gh repo:*)",
+      "Bash(npm install:*)",
+      "Bash(npx vitest:*)"
     ]
   }
 }

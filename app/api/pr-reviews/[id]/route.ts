@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import type { PRReviewResult } from '@/lib/pr-review/types'
 
+// Explicit severity priority for sorting findings (high first)
+const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
+
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   try {
@@ -9,24 +12,34 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       where: { id },
       include: {
         findings: {
-          orderBy: [{ severity: 'asc' }, { createdAt: 'asc' }],
+          // Fetch without DB-level ordering; we sort in memory below with explicit priority.
+          // DB-level `severity asc` sorts alphabetically (high, low, medium) which is wrong.
+          orderBy: { createdAt: 'asc' },
         },
       },
     })
 
     if (!review) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-    // Parse stored focus files and workflow notes — rawPayloadJson is internal and not forwarded
+    // Sort findings: high → medium → low, then by createdAt within each group
+    const sortedFindings = [...review.findings].sort((a, b) => {
+      const pa = SEVERITY_ORDER[a.severity] ?? 3
+      const pb = SEVERITY_ORDER[b.severity] ?? 3
+      return pa - pb
+    })
+
+    // rawPayloadJson stores derived summary data (focusFiles + workflowNotes), not the raw diff.
+    // The field name is a legacy artefact from the initial schema; a rename is deferred to avoid migration churn.
     let focusFiles: PRReviewResult['focusFiles'] = []
     let workflowNotes: string[] = []
     if (review.rawPayloadJson) {
       try {
-        const raw = JSON.parse(review.rawPayloadJson) as {
+        const stored = JSON.parse(review.rawPayloadJson) as {
           focusFiles?: PRReviewResult['focusFiles']
           workflowNotes?: string[]
         }
-        focusFiles = raw.focusFiles ?? []
-        workflowNotes = raw.workflowNotes ?? []
+        focusFiles = stored.focusFiles ?? []
+        workflowNotes = stored.workflowNotes ?? []
       } catch {
         // malformed payload — degrade gracefully
       }
@@ -63,7 +76,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         },
       },
       focusFiles,
-      findings: review.findings.map(f => ({
+      findings: sortedFindings.map(f => ({
         id: f.id,
         category: f.category as PRReviewResult['findings'][number]['category'],
         severity: f.severity as PRReviewResult['findings'][number]['severity'],

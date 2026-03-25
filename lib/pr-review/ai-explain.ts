@@ -4,8 +4,13 @@
  *
  * Only runs when canUsePRReviewAI() returns true.
  * Failure is always non-fatal — deterministic content is the fallback.
+ *
+ * Safety: snippets are redacted before being sent to OpenAI because aiExplainFindings
+ * is called before processSnippet runs in the runner pipeline. Raw diff content must
+ * never be forwarded to external services.
  */
 import { canUsePRReviewAI, getPRReviewAIConfig } from './config'
+import { redactSnippet } from './redact'
 import type { PRReviewFindingDraft } from './types'
 
 export async function aiExplainFindings(
@@ -40,14 +45,22 @@ export async function aiExplainFindings(
 }
 
 function buildPrompt(findings: PRReviewFindingDraft[], prTitle: string): string {
-  const items = findings.map(f => ({
-    ruleId: f.ruleId,
-    filePath: f.evidence.filePath,
-    category: f.category,
-    severity: f.severity,
-    // Use only a short snippet in the prompt — avoid sending revealed secrets to OpenAI
-    snippet: f.evidence.snippet?.slice(0, 150) ?? '',
-  }))
+  const items = findings.map(f => {
+    // Redact raw snippet before sending to OpenAI — aiExplainFindings runs before
+    // processSnippet in the pipeline, so f.evidence.snippet may still contain raw secrets.
+    const rawSnippet = f.evidence.snippet ?? ''
+    const safeSnippet = rawSnippet
+      ? redactSnippet(rawSnippet).redactedSnippet.slice(0, 150)
+      : ''
+
+    return {
+      ruleId: f.ruleId,
+      filePath: f.evidence.filePath,
+      category: f.category,
+      severity: f.severity,
+      snippet: safeSnippet,
+    }
+  })
 
   return `You are a senior software engineer reviewing a GitHub PR titled: "${prTitle}".
 

@@ -4,7 +4,9 @@
  * Rules:
  * - Exposure and security category findings are redacted by default.
  * - Redaction replaces likely secret values with [REDACTED].
- * - The full unredacted content is stored separately (revealedSnippet).
+ * - The full unredacted content is stored separately as revealedSnippet ONLY when actual
+ *   redaction occurred (isRedacted === true). When isRedacted is false, revealedSnippet is
+ *   undefined — this ensures canReveal in the client DTO is never misleadingly true.
  * - Nothing in the client-facing DTO ever exposes revealedSnippet.
  */
 
@@ -23,7 +25,7 @@ const SECRET_PATTERNS: Array<{ pattern: RegExp; placeholder: string }> = [
     pattern: /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
     placeholder: 'Bearer [REDACTED]',
   },
-  // Raw hex/base64 blobs ≥ 16 chars that look like secrets
+  // Raw hex/base64 blobs ≥ 32 chars that look like secrets
   {
     pattern: /\b[A-Fa-f0-9]{32,}\b/g,
     placeholder: '[REDACTED]',
@@ -69,8 +71,13 @@ export function shouldRedact(category: string, ruleId: string): boolean {
 
 /**
  * Processes a raw snippet for storage:
- * - If redaction applies, returns both redacted and revealed forms.
- * - If not, returns the raw snippet as-is with isRedacted=false.
+ * - If redaction applies and patterns are matched, stores both redacted (snippet) and
+ *   original (revealedSnippet) forms. isRedacted = true.
+ * - If redaction applies but nothing was actually replaced, stores the snippet as-is
+ *   with isRedacted = false and revealedSnippet = undefined.
+ * - If redaction does not apply, returns raw snippet unchanged with isRedacted = false.
+ *
+ * This ensures canReveal is only true when content was actually obscured.
  */
 export function processSnippet(
   raw: string | undefined,
@@ -92,10 +99,16 @@ export function processSnippet(
 
   const { redactedSnippet, isRedacted } = redactSnippet(raw)
 
+  if (!isRedacted) {
+    // Category requires redaction but no patterns fired — snippet is already safe as-is.
+    // Do NOT store revealedSnippet so canReveal stays false.
+    return { snippet: raw, redactedSnippet: undefined, revealedSnippet: undefined, isRedacted: false }
+  }
+
   return {
     snippet: redactedSnippet,      // safe form stored in snippet column
     redactedSnippet,               // explicit redacted form for future queries
-    revealedSnippet: raw,          // full form, never returned by default
-    isRedacted,
+    revealedSnippet: raw,          // full form, never returned by GET
+    isRedacted: true,
   }
 }
